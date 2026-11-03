@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.10.0/p5.min.js"></script>
+  
+<script src="https://cdn.jsdelivr.net/gh/netizenorg/netnet-standard-library@1.0.1/build/nn.min.js"></script>
+  <script>
+  //alright, API key odds and ends time, need to make a big huge way to interact with prompts; I will use gemini api, I should have 5 api keys that this thing iterates through whenever we run out
+   var apiKey = "GEMINI_API_KEY_BECAUSE_I_AM_TOO_LAZY_TO_USE_CLOUDFLARE_F";
+var x1 = "Pretend to be a fortune teller responding to the fallowing prompts, like, really hippy dippy type replies, but occationally change your accent to a stereotypical mallinial or angsty teen/";
+
+var askGemini = function(x) {
+    var xhr = new XMLHttpRequest();
+    
+
+    xhr.open("POST", "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent", true);
+    xhr.setRequestHeader("Content-Type", "application/json");
+    xhr.setRequestHeader("x-goog-api-key", apiKey);
+
+    xhr.onload = function() {
+        if (xhr.status === 200) {
+            var data = JSON.parse(xhr.responseText);
+            var reply = data.candidates[0].content.parts[0].text;
+            console.log(reply);
+          return reply;
+        } else {
+            console.log("Error:", xhr.status, xhr.responseText);
+        }
+    };
+
+    xhr.onerror = function() {
+        //console.log("Network error or smth");
+    };
+
+    xhr.send(JSON.stringify({
+        contents: [{
+            role: "user",
+            parts: [{
+                text: String(x)
+            }]
+        }]
+    }));
+};
+
+askGemini(x1);
+
+    var dialogchain=function(Wdlst,sn, pos=0){
+      //this stores a few things, it looks at the prior diolog for context 
+      this.wordlist=Wdlst; //this is a JSON of words
+      this.sentArr=sn; //holds the current sentence array
+      this.cwattr=pos; //tells you whether this word is a subject, verb, adverb, adjectictive, object, or conjunction
+    }
+   dialogchain.dSbox=function(x,y,txt){
+      /*Subject
+
+Adverb*
+
+Verb
+
+Adverb*
+
+Adjective*
+
+Object
+
+Modifier*
+
+Conjunction
+*/
+
+    //this.x=x;
+      //this.y=y;
+      //this.txt=txt;
+
+    rect(x, y - textAscent(), textWidth(txt), textAscent()+textDescent());
+    text(txt, x, y);
+
+    }
+  var Opts = [
+    "subject",
+    "adverb",
+    "verb",
+    "adverb",
+    "adjective",
+    "object",
+    "modifier",
+    "conjunction",
+    "date"
+]; //stores options for the diolog output, 3 at a time
+    dialogchain.prototype.generate=function(){
+      //pick from wordlist a random value
+      
+    var words = this.wordlist[Opts[this.cwattr]];
+
+    this.options = [];
+
+    if (!words.length) throw new Error("we may have a wordbank or access problem");
+
+    for (var i = 0; i < 3; i++) {
+        this.options.push(words[Math.floor(Math.random() * words.length)]);
+        dialogchain.dSbox(200+textWidth(this.sentArr[this.sentArr.length-1])*i,300, this.options[this.options.length-1]); //all spaced out and on the screen
+    }
+
+    return this.options;
+};
+
+// Select one of the 3 generated words, this is where the loop begins
+dialogchain.prototype.select = function(i) {
+    if (!this.options[i]) return;
+
+    this.sentArr.push(this.options[i]);
+
+    // Advance through the category loop
+    this.cwattr = (this.cwattr + 1) % Opts.length;
+
+    return this.generate();
+};
+
+// Repeat the current category, useful for adjectives/adverbs
+dialogchain.prototype.repeat = function() {
+    return this.generate();
+};
+
+// Skip to the next category without adding anything
+dialogchain.prototype.skip = function() {
+    this.cwattr = (this.cwattr + 1) % Opts.length;
+    return this.generate();
+};
+
+// Return the current sentence
+dialogchain.prototype.getSentence = function() {
+    return this.sentArr.join(" ");
+};
+    
+
+    setup = function() {
+    
+      createCanvas(screen.width, screen.height-300)
+      background(0, 255, 255);
+      text("Would you like to know your fortune my child?",200,20)
+    //rect(309,390,32,10);
+      dialogchain.dSbox(309,390, "yes bae");
+      dialogchain.dSbox(360,400, "how high am I");
+    }
+//with
+    draw = function() {
+//rect()
+    //right, so modeling is subject, adjictive, adverb[n many], object
+    //
+    }
+  
+  //new p5(sketch)
+</script>
+  
+<head>
+<style>
+  #tbx{
+    position: absolute;
+    background-color: black;
+    width: 100px;
+    left: 11px;
+    
+      
+  }
+  #cht{
+    
+  }
+  </style>  
+  </head>
+  <body>
+  
+  <div id="tbx">
+    <form>
+      <input id="cht">
+    </form>
+    hello
+    </div>
+  </body>
+</html>

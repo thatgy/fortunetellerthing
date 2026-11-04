@@ -44,8 +44,9 @@ var askGemini = function(x) {
 askGemini(x1);
 
     var dialogchain=function(Wdlst,sn, pos=0){
+      //Wdlst is assumed to be a json file path
       //this stores a few things, it looks at the prior diolog for context 
-      this.wordlist=Wdlst; //this is a JSON of words
+      this.wordlist=require(Wdlst); //this is a JSON of words, Wdlst stores the directory
       this.sentArr=sn; //holds the current sentence array
       this.cwattr=pos; //tells you whether this word is a subject, verb, adverb, adjectictive, object, or conjunction
     }
@@ -140,12 +141,15 @@ dialogchain.prototype.getSentence = function() {
     //rect(309,390,32,10);
       dialogchain.dSbox(309,390, "yes bae");
       dialogchain.dSbox(360,400, "how high am I");
+    dialogchain.dSbox(590,400, "send");
     }
 //with
     draw = function() {
 //rect()
     //right, so modeling is subject, adjictive, adverb[n many], object
     //
+    
+      //dialogchain.dSbox(590,400, "send");
     }
   
   //new p5(sketch)

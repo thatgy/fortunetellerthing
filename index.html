@@ -1,9 +1,30 @@
 <!DOCTYPE html>
 <html lang="en-US">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.10.0/p5.min.js"></script>
-  
+  <script type="module">
+    import wordlist from "./massive_fortune_wordbank.json"
+        with { type: "json" };
+
+    console.log(wordlist);
+</script>
 <script src="https://cdn.jsdelivr.net/gh/netizenorg/netnet-standard-library@1.0.1/build/nn.min.js"></script>
   <script>
+   var gamepadIndex = null;
+var previousButtons = [];
+var gp;
+window.addEventListener("gamepadconnected", function(e) {
+    gamepadIndex = e.gamepad.index;
+    previousButtons = [];
+    console.log("Gamepad connected:", e.gamepad.id);
+  gp=e.gamepad;
+});
+
+window.addEventListener("gamepaddisconnected", function(e) {
+    if (gamepadIndex === e.gamepad.index) {
+        gamepadIndex = null;
+        previousButtons = [];
+    }
+});
   //alright, API key odds and ends time, need to make a big huge way to interact with prompts; I will use gemini api, I should have 5 api keys that this thing iterates through whenever we run out
    var apiKey = "GEMINI_API_KEY_BECAUSE_I_AM_TOO_LAZY_TO_USE_CLOUDFLARE_F";
 var x1 = "Pretend to be a fortune teller responding to the fallowing prompts, like, really hippy dippy type replies, but occationally change your accent to a stereotypical mallinial or angsty teen/";
@@ -40,18 +61,47 @@ var askGemini = function(x) {
         }]
     }));
 };
+var oldButtons = [];
+    
+var checkButtons = async function() {
+    var i = -1;
+    do {
+        i++;
+        if (i % 16 === 0)
+            await new Promise(requestAnimationFrame); //hand control over to the browser every so often
+    } while (gp && !gp.buttons[i %= 16].pressed);
+    return i;
+};
+var waitForButton = function() {
+  //make an awaitable function that checks if the d pad or the a button is pressed, halting when they are
+    return new Promise(function(resolve) {
+         
+            var gp = navigator.getGamepads()[0], hit = -1;
 
+            if (gp) 
+              for (let i = 0; i < gp.buttons.length; i++) {
+                if (gp.buttons[i].pressed && !oldButtons[i] && hit === -1) hit = i;
+                oldButtons[i] = gp.buttons[i].pressed;
+            }
+
+            if (hit !== -1) resolve(hit);
+            else requestAnimationFrame(check);
+        
+        
+    });
+};
 askGemini(x1);
 
     var dialogchain=function(Wdlst,sn, pos=0){
       //Wdlst is assumed to be a json file path
       //this stores a few things, it looks at the prior diolog for context 
-      this.wordlist=require(Wdlst); //this is a JSON of words, Wdlst stores the directory
+      this.wordlist=Wdlst; //this is a JSON of words, Wdlst stores the directory, using require because this is in a constructor and well...actually since I forced an import, this mess fixes it
       this.sentArr=sn; //holds the current sentence array
       this.cwattr=pos; //tells you whether this word is a subject, verb, adverb, adjectictive, object, or conjunction
     }
    dialogchain.dSbox=function(x,y,txt){
       /*Subject
+      
 
 Adverb*
 
@@ -71,10 +121,21 @@ Conjunction
     //this.x=x;
       //this.y=y;
       //this.txt=txt;
+     this.x=x;
+     this.y=y;
+     this.txt=txt;
+     this.isSelected=false;
+     
 
     rect(x, y - textAscent(), textWidth(txt), textAscent()+textDescent());
     text(txt, x, y);
 
+    }
+    dialogchain.dSbox.prototype.update=function(){
+      
+    rect(this.x, this.y - textAscent(), textWidth(this.txt), textAscent()+textDescent());
+    text(this.txt, this.x, this.y);
+      if(this.isSelected) fill(278,20,2); //purely to let you know when an object is selected
     }
   var Opts = [
     "subject",
@@ -93,55 +154,102 @@ Conjunction
     var words = this.wordlist[Opts[this.cwattr]];
 
     this.options = [];
+   
 
     if (!words.length) throw new Error("we may have a wordbank or access problem");
-
+    
     for (var i = 0; i < 3; i++) {
-        this.options.push(words[Math.floor(Math.random() * words.length)]);
-        dialogchain.dSbox(200+textWidth(this.sentArr[this.sentArr.length-1])*i,300, this.options[this.options.length-1]); //all spaced out and on the screen
+        this.options.push(new dialogchain.dSbox(200+(this.sentArr.length)?textWidth(this.sentArr[this.sentArr.length-1])*i:0,300,words[Math.floor(Math.random() * words.length)]));
+        //all spaced out and on the screen..ternary required because if the first entry does not exist, there is no offset
     }
 
-    return this.options;
+    return this.options; //holds the dialog box array
 };
-
+//dialogchain.prototype.get
 // Select one of the 3 generated words, this is where the loop begins
-dialogchain.prototype.select = function(i) {
-    if (!this.options[i]) return;
+dialogchain.prototype.select = async function(i) {
+    
+   this.options[0].isSelected = true;
+//var jprev=0;
+var j=0;
+    while (i!==9) {
+      i=await checkbuttons();
+        switch (i) {
+            case 14: ///left d pad is hit
+            this.options[j].isSelected=false;
+            this.options[j].update();
+                if(!(j)) j=2; else j--;
+            this.options[j].isSelected=true;
+            this.options[j].update();
+            continue;
+            //var j=await checkbuttons(); //essentally, halt this function until a button is pressed
+            //iprev=i;
+            //i=((i+j)<=5 &&(i+j)!==-1 ? (j==0)? ) 
+                
+                //break;
 
-    this.sentArr.push(this.options[i]);
+            case 15: //right d pad
+                        this.options[j].isSelected=false;
+                        this.options[j].update();
+                if(j==2) j=0; else j++;
+            this.options[j].isSelected=true;
+            this.options[j].update();
+            
+                
+                continue;
+                // Intentional fallthrough
 
-    // Advance through the category loop
-    this.cwattr = (this.cwattr + 1) % Opts.length;
+            case 8: // Skip
+            
+                this.cwattr = (++this.cwattr) % Opts.length;
+                return this.generate();
 
-    return this.generate();
+             //this.options[0].isSelected = true;
+            iprev=0;
+                break;
+
+            case 9: // Send
+            background(0,0,0);
+              return  dialogchain.dSbox(200,200,askGemini(this.getSentence()));
+            
+                
+            break;
+        }
+      this.options[j].isSelected=true;
+      this.options[j].update();
+      iprev=i;
+
+        i = await waitForButton();
+    }
+  print("do you want a new fortune?")
 };
+    
 
 // Repeat the current category, useful for adjectives/adverbs
 dialogchain.prototype.repeat = function() {
     return this.generate();
 };
 
-// Skip to the next category without adding anything
-dialogchain.prototype.skip = function() {
-    this.cwattr = (this.cwattr + 1) % Opts.length;
-    return this.generate();
-};
 
 // Return the current sentence
 dialogchain.prototype.getSentence = function() {
     return this.sentArr.join(" ");
 };
-    
+dialogchain.prototype.run=function(){
+  //set up random number generation for adjectives and adverbs, set up chat history, etc. Overall loop should work, the whole sample with would you like to know your fortune my child should, if you hit 'a' on "yes bae", enter thid loop, if you hit "how high am I, just reply, bro, you are like, sooo stoned, or sleep deprived, either way, there is no way to know the difference atp"
+  
+}
 
     setup = function() {
     
-      createCanvas(screen.width, screen.height-300)
+      createCanvas(screen.width, screen.height);
       background(0, 255, 255);
-      text("Would you like to know your fortune my child?",200,20)
+      text("Would you like to know your fortune my child?",200,20);
     //rect(309,390,32,10);
       dialogchain.dSbox(309,390, "yes bae");
       dialogchain.dSbox(360,400, "how high am I");
-    dialogchain.dSbox(590,400, "send");
+    //dialogchain.dSbox(590,400, "send");
+    
     }
 //with
     draw = function() {
@@ -150,25 +258,13 @@ dialogchain.prototype.getSentence = function() {
     //
     
       //dialogchain.dSbox(590,400, "send");
+      text("use the D pad to navigate, use 'b' to skip a word generation run, a to select the word, and start to send it", 100,600);
     }
   
   //new p5(sketch)
 </script>
   
 <head>
-<style>
-  #tbx{
-    position: absolute;
-    background-color: black;
-    width: 100px;
-    left: 11px;
-    
-      
-  }
-  #cht{
-    
-  }
-  </style>  
   </head>
   <body>
   

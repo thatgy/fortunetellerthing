@@ -1,278 +1,471 @@
 <!DOCTYPE html>
 <html lang="en-US">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>The Cosmic Side Eye — Carnival Fortune Teller</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.10.0/p5.min.js"></script>
-  <script type="module">
-    import wordlist from "./massive_fortune_wordbank.json"
-        with { type: "json" };
-
-    console.log(wordlist);
-</script>
-<script src="https://cdn.jsdelivr.net/gh/netizenorg/netnet-standard-library@1.0.1/build/nn.min.js"></script>
-  <script>
-   var gamepadIndex = null;
+<style>
+* { box-sizing:border-box; }
+body { margin:0; background:#101d23; color:#f5dfad; font:15px Georgia,serif; }
+main { max-width:1144px; margin:12px auto 24px; padding:0 12px; }
+#stage canvas { display:block; max-width:100%; width:100% !important; height:auto !important; border-radius:11px; }
+.note { text-align:center; color:#c9b58c; font-size:13px; line-height:1.5; }
+</style>
+</head>
+<body>
+<main>
+<div id="stage"></div>
+<p class="note">Nintendo controller only · D-pad navigates · A chooses · B skips · X rerolls · hold X to forget · + sends</p>
+</main>
+<script>
+var gamepadIndex = null;
 var previousButtons = [];
-var gp;
+var gp; // KEEP: your original gamepad object.
+var chain, wordlist;
+
 window.addEventListener("gamepadconnected", function(e) {
     gamepadIndex = e.gamepad.index;
     previousButtons = [];
-    console.log("Gamepad connected:", e.gamepad.id);
-  gp=e.gamepad;
+    gp = e.gamepad;
+    console.log("Gamepad connected:", e.gamepad.id, "mapping:", e.gamepad.mapping); // Nintendo: standard mapping uses A=1, B=0, X=3, Y=2.
 });
-
 window.addEventListener("gamepaddisconnected", function(e) {
     if (gamepadIndex === e.gamepad.index) {
         gamepadIndex = null;
         previousButtons = [];
+        gp = null;
     }
 });
-  //alright, API key odds and ends time, need to make a big huge way to interact with prompts; I will use gemini api, I should have 5 api keys that this thing iterates through whenever we run out
-   var apiKey = "GEMINI_API_KEY_BECAUSE_I_AM_TOO_LAZY_TO_USE_CLOUDFLARE_F";
-var x1 = "Pretend to be a fortune teller responding to the fallowing prompts, like, really hippy dippy type replies, but occationally change your accent to a stereotypical mallinial or angsty teen/";
 
-var askGemini = function(x) {
-    var xhr = new XMLHttpRequest();
-    
+var apiKey = "AQ.Ab8RN6K2j7_MgkNs56_cvemnEVHy7HW8KH5DPOD75jBowwWk9Q";
+var x1 = "Pretend to be a fortune teller responding to the fallowing prompts, like, really hippy dippy type replies, but occationally change your accent to a stereotypical mallinial or angsty teen/"; // KEEP: your original Gemini instruction verbatim.
 
-    xhr.open("POST", "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent", true);
-    xhr.setRequestHeader("Content-Type", "application/json");
-    xhr.setRequestHeader("x-goog-api-key", apiKey);
-
-    xhr.onload = function() {
-        if (xhr.status === 200) {
-            var data = JSON.parse(xhr.responseText);
-            var reply = data.candidates[0].content.parts[0].text;
-            console.log(reply);
-          return reply;
-        } else {
-            console.log("Error:", xhr.status, xhr.responseText);
-        }
-    };
-
-    xhr.onerror = function() {
-        //console.log("Network error or smth");
-    };
-
-    xhr.send(JSON.stringify({
-        contents: [{
-            role: "user",
-            parts: [{
-                text: String(x)
-            }]
-        }]
-    }));
+// FIX: XMLHttpRequest is asynchronous. Its reply must resolve after onload.
+// ADD: The prior conversation is passed as actual Gemini user/model turns.
+var askGemini = function(x, history) {
+    return new Promise(function(resolve, reject) {
+        if (apiKey === "YOUR_GEMINI_API_KEY") return reject(new Error("Put your Gemini API key in apiKey first."));
+        var xhr = new XMLHttpRequest();
+        xhr.open("POST", "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent", true);
+        xhr.setRequestHeader("Content-Type", "application/json");
+        xhr.setRequestHeader("x-goog-api-key", apiKey);
+        xhr.onload = function() {
+            if (xhr.status !== 200) return reject(new Error("Gemini HTTP " + xhr.status + ": " + xhr.responseText.slice(0, 200)));
+            try {
+                var data = JSON.parse(xhr.responseText);
+                var parts = data.candidates[0].content.parts;
+                var reply = parts.map(function(p) {return p.text || "";}).join("").trim();
+                if (!reply) throw new Error("Gemini returned no text.");
+                resolve(reply);
+            } catch(e) { reject(e); }
+        };
+        xhr.onerror = function() { reject(new Error("Network error contacting Gemini.")); };
+  xhr.send(JSON.stringify({
+    contents: [{
+        role: "user",
+        parts: [{text: x1 + "\n" + x}]
+    }]
+}));
+    });
 };
-var oldButtons = [];
-    
+
+// KEEP: your async do/while scanner, yielding once per 16-button cycle.
+// FIX: refresh gp, detect fresh presses, and wait while the controller is disconnected.
 var checkButtons = async function() {
     var i = -1;
     do {
         i++;
-        if (i % 16 === 0)
-            await new Promise(requestAnimationFrame); //hand control over to the browser every so often
-    } while (gp && !gp.buttons[i %= 16].pressed);
-    return i;
-};
-var waitForButton = function() {
-  //make an awaitable function that checks if the d pad or the a button is pressed, halting when they are
-    return new Promise(function(resolve) {
-         
-            var gp = navigator.getGamepads()[0], hit = -1;
-
-            if (gp) 
-              for (let i = 0; i < gp.buttons.length; i++) {
-                if (gp.buttons[i].pressed && !oldButtons[i] && hit === -1) hit = i;
-                oldButtons[i] = gp.buttons[i].pressed;
-            }
-
-            if (hit !== -1) resolve(hit);
-            else requestAnimationFrame(check);
-        
-        
-    });
-};
-askGemini(x1);
-
-    var dialogchain=function(Wdlst,sn, pos=0){
-      //Wdlst is assumed to be a json file path
-      //this stores a few things, it looks at the prior diolog for context 
-      this.wordlist=Wdlst; //this is a JSON of words, Wdlst stores the directory, using require because this is in a constructor and well...actually since I forced an import, this mess fixes it
-      this.sentArr=sn; //holds the current sentence array
-      this.cwattr=pos; //tells you whether this word is a subject, verb, adverb, adjectictive, object, or conjunction
-    }
-   dialogchain.dSbox=function(x,y,txt){
-      /*Subject
-      
-
-Adverb*
-
-Verb
-
-Adverb*
-
-Adjective*
-
-Object
-
-Modifier*
-
-Conjunction
-*/
-
-    //this.x=x;
-      //this.y=y;
-      //this.txt=txt;
-     this.x=x;
-     this.y=y;
-     this.txt=txt;
-     this.isSelected=false;
-     
-
-    rect(x, y - textAscent(), textWidth(txt), textAscent()+textDescent());
-    text(txt, x, y);
-
-    }
-    dialogchain.dSbox.prototype.update=function(){
-      
-    rect(this.x, this.y - textAscent(), textWidth(this.txt), textAscent()+textDescent());
-    text(this.txt, this.x, this.y);
-      if(this.isSelected) fill(278,20,2); //purely to let you know when an object is selected
-    }
-  var Opts = [
-    "subject",
-    "adverb",
-    "verb",
-    "adverb",
-    "adjective",
-    "object",
-    "modifier",
-    "conjunction",
-    "date"
-]; //stores options for the diolog output, 3 at a time
-    dialogchain.prototype.generate=function(){
-      //pick from wordlist a random value
-      
-    var words = this.wordlist[Opts[this.cwattr]];
-
-    this.options = [];
-   
-
-    if (!words.length) throw new Error("we may have a wordbank or access problem");
-    
-    for (var i = 0; i < 3; i++) {
-        this.options.push(new dialogchain.dSbox(200+(this.sentArr.length)?textWidth(this.sentArr[this.sentArr.length-1])*i:0,300,words[Math.floor(Math.random() * words.length)]));
-        //all spaced out and on the screen..ternary required because if the first entry does not exist, there is no offset
-    }
-
-    return this.options; //holds the dialog box array
-};
-//dialogchain.prototype.get
-// Select one of the 3 generated words, this is where the loop begins
-dialogchain.prototype.select = async function(i) {
-    
-   this.options[0].isSelected = true;
-//var jprev=0;
-var j=0;
-    while (i!==9) {
-      i=await checkbuttons();
-        switch (i) {
-            case 14: ///left d pad is hit
-            this.options[j].isSelected=false;
-            this.options[j].update();
-                if(!(j)) j=2; else j--;
-            this.options[j].isSelected=true;
-            this.options[j].update();
-            continue;
-            //var j=await checkbuttons(); //essentally, halt this function until a button is pressed
-            //iprev=i;
-            //i=((i+j)<=5 &&(i+j)!==-1 ? (j==0)? ) 
-                
-                //break;
-
-            case 15: //right d pad
-                        this.options[j].isSelected=false;
-                        this.options[j].update();
-                if(j==2) j=0; else j++;
-            this.options[j].isSelected=true;
-            this.options[j].update();
-            
-                
-                continue;
-                // Intentional fallthrough
-
-            case 8: // Skip
-            
-                this.cwattr = (++this.cwattr) % Opts.length;
-                return this.generate();
-
-             //this.options[0].isSelected = true;
-            iprev=0;
-                break;
-
-            case 9: // Send
-            background(0,0,0);
-              return  dialogchain.dSbox(200,200,askGemini(this.getSentence()));
-            
-                
-            break;
+        if (i % 16 === 0) {
+            await new Promise(requestAnimationFrame); // hand control to browser
+            gp = gamepadIndex === null ? null : navigator.getGamepads()[gamepadIndex];
+            i = 0;
         }
-      this.options[j].isSelected=true;
-      this.options[j].update();
-      iprev=i;
-
-        i = await waitForButton();
-    }
-  print("do you want a new fortune?")
+        if (gp && gp.buttons[i]) {
+            var pressed = gp.buttons[i].pressed;
+            if (pressed && !previousButtons[i]) {
+                previousButtons[i] = true;
+                // NINTENDO FIX: physical X is button 3 (top), not button 2 (left/Y).
+                // X tap = reroll; X held >= 1.2 seconds = erase history.
+                if (i === 3) {
+                    var start = performance.now();
+                    do {
+                        await new Promise(requestAnimationFrame);
+                        gp = gamepadIndex === null ? null : navigator.getGamepads()[gamepadIndex];
+                        if (gp && gp.buttons[3] && gp.buttons[3].pressed && performance.now() - start >= 1200)
+                            return 16;
+                    } while (gp && gp.buttons[3] && gp.buttons[3].pressed);
+                    previousButtons[3] = false;
+                    return 2; // Keep select()'s existing X=2 case unchanged.
+                }
+                // FIX: finish this press on release. Otherwise a button released
+                // while Gemini is answering can leave previousButtons stuck true.
+                do {
+                    await new Promise(requestAnimationFrame);
+                    gp = gamepadIndex === null ? null : navigator.getGamepads()[gamepadIndex];
+                } while (gp && gp.buttons[i] && gp.buttons[i].pressed);
+                previousButtons[i] = false;
+                // NINTENDO FIX: convert physical Switch face buttons to existing switch cases.
+                // Standard Gamepad API: B=0, A=1, Y=2, X=3. Logical: A=0, B=1, X=2, Y=3.
+                return i === 0 ? 1 : i === 1 ? 0 : i === 2 ? 3 : i;
+            }
+            previousButtons[i] = pressed;
+        }
+    } while (true);
 };
-    
 
-// Repeat the current category, useful for adjectives/adverbs
-dialogchain.prototype.repeat = function() {
-    return this.generate();
+var dialogchain = function(Wdlst, sn, pos = 0) {
+    this.wordlist = Wdlst;
+    this.sentArr = sn || [];
+    this.cwattr = pos;
+    this.options = [];
+    this.selecting = false; // One active select() loop; generate() can refresh it without starting another.
+    this.mode = "intro";
+    this.reply = "";
+    try { this.history = JSON.parse(localStorage.getItem("fortune_history") || "[]"); }
+    catch(e) { this.history = []; }
+    if (!Array.isArray(this.history)) this.history = [];
+};
+
+var fortuneWrap = function(txt,w) {
+    var lines=[];
+    String(txt).split("\n").forEach(function(p) {
+        var line="";
+        p.split(/\s+/).forEach(function(word) {
+            if (!word) return;
+            if (textWidth(line+(line ? " " : "")+word)>w && line) { lines.push(line); line=""; }
+            while (textWidth(word)>w && word.length>1) {
+                var n=word.length-1;
+                while (n>1 && textWidth(word.slice(0,n)+"-")>w) n--;
+                if (line) { lines.push(line); line=""; }
+                lines.push(word.slice(0,n)+"-"); word=word.slice(n);
+            }
+            line+=(line ? " " : "")+word;
+        });
+        lines.push(line);
+    });
+    return lines;
+};
+
+dialogchain.dSbox = function(x, y, txt, w, h) {
+    this.x = x;
+    this.y = y;
+    this.txt = String(txt);
+    this.w = w || 290;
+    this.h = h || 76;
+    this.isSelected = false;
+    // The initial box and each highlight change use the same update() method.
+};
+dialogchain.dSbox.prototype.update = function() {
+    push();
+    stroke(this.isSelected ? "#ffe1a0" : "#a7804a");
+    strokeWeight(this.isSelected ? 3 : 1.4);
+    fill(this.isSelected ? "#8c3446" : "#f0dfb9");
+    rect(this.x, this.y, this.w, this.h, 9);
+    noStroke(); fill(this.isSelected ? "#fff0cb" : "#3b2b2d");
+    textFont("Georgia"); textAlign(CENTER, CENTER);
+    var size = 19, lines;
+    do { textSize(size); lines = fortuneWrap(this.txt, this.w-24); size--; }
+    while (lines.length > 3 && size > 12);
+    if (lines.length > 3) lines = lines.slice(0,3);
+    var lh = (size+1)*1.18;
+    for (var t=0;t<lines.length;t++)
+        text(lines[t], this.x+this.w/2, this.y+this.h/2+(t-(lines.length-1)/2)*lh);
+    if (this.isSelected) {
+        fill("#ffe0a0");
+        triangle(this.x+this.w/2-6,this.y-13,this.x+this.w/2+6,this.y-13,this.x+this.w/2,this.y-5);
+    }
+    pop();
+};
+
+var Opts = ["subject", "adverb", "verb", "adverb", "adjective", "object", "modifier", "conjunction", "date"];
+
+dialogchain.prototype.generate = function(startx = 406, y = 534, multiplier = 1) {
+    var words = this.wordlist[Opts[this.cwattr]];
+    this.options = [];
+    if (!words || !words.length) throw new Error("Wordbank category missing: " + Opts[this.cwattr]);
+    for (var i=0; i<4; i++) {
+        this.options.push(new dialogchain.dSbox(
+            startx + (i % 2)*313*multiplier,
+            y + Math.floor(i / 2)*90,
+            words[Math.floor(Math.random()*words.length)], 291, 76
+        ));
+    }
+    // HANDOFF: generate() starts select() on the first set of options.
+    // When select() calls generate() again, it refreshes choices and the SAME
+    // selection loop continues (no growing recursive Promise chain).
+    return this.selecting ? this.options : this.select(true, this.options.length - 1);
+};
+
+dialogchain.prototype.select = async function(isRunningloop, mxind = 3) {
+    if (!this.options.length) return; // FIX: can't select from an empty set.
+    this.selecting = true;
+    var j = 0;
+    this.options[j].isSelected = true;
+    this.options[j].update();
+    try {
+        while (true) {
+            var i = await checkButtons(); // KEEP: your asynchronous controller scanner.
+            switch (i) {
+                case 14: // Nintendo D-pad left
+                    this.options[j].isSelected = false;
+                    this.options[j].update();
+                    if (!j) j = mxind; else j--;
+                    this.options[j].isSelected = true;
+                    this.options[j].update();
+                    continue;
+                case 15: // Nintendo D-pad right
+                    this.options[j].isSelected = false;
+                    this.options[j].update();
+                    if (j === mxind) j = 0; else j++;
+                    this.options[j].isSelected = true;
+                    this.options[j].update();
+                    continue;
+                case 0: // Nintendo A: select the highlighted option
+                    if (!isRunningloop) return this.options[j].txt;
+                    this.sentArr.push(this.options[j].txt);
+                    // Intentional fallthrough: adding a word also advances the category.
+                case 1: // Nintendo B: skip current category
+                    if (!isRunningloop) continue;
+                    this.cwattr = (++this.cwattr) % Opts.length;
+                    this.generate(); // HANDOFF: regenerate; select() stays active.
+                    j = 0;
+                    this.options[j].isSelected = true;
+                    this.options[j].update();
+                    continue;
+                case 2: // Nintendo X (tap): reroll category
+                    if (isRunningloop) {
+                        this.repeat(); // repeat() uses generate(), without starting another select().
+                        j = 0;
+                        this.options[j].isSelected = true;
+                        this.options[j].update();
+                    }
+                    continue;
+                case 16: // Nintendo X (hold): forget saved conversations
+                    this.history = [];
+                    localStorage.removeItem("fortune_history");
+                    this.reply = "Conversation memory cleared.";
+                    continue;
+                case 9: // + / Start: send assembled sentence
+                    if (!isRunningloop) return this.options[j].txt;
+                    if (this.sentArr.length) return this.getSentence();
+                    continue;
+            }
+        }
+    } finally { this.selecting = false; }
+};
+
+dialogchain.prototype.repeat = function() { return this.generate(); };
+dialogchain.prototype.getSentence = function() { return this.sentArr.join(" "); };
+
+// Most gameplay stays here: intro -> word loop -> Gemini -> restart.
+dialogchain.prototype.run = async function() {
+    while (true) {
+        this.mode = "intro";
+        this.sentArr = [];
+        this.cwattr = 0;
+        this.reply = "";
+        this.options = [
+            new dialogchain.dSbox(409, 530, "yes bae", 291, 76),
+            new dialogchain.dSbox(722, 530, "how high am I", 291, 76)
+        ];
+        var out = await this.select(false, 1);
+        if (out !== "yes bae") {
+            this.reply = "Bro, you are, like, sooo stoned—or sleep deprived. The stars cannot tell the difference at this point. Please hydrate, bestie.";
+        } else {
+            this.mode = "building";
+            // generate() passes control to select(), which calls generate()
+            // again after each selection without nesting input loops.
+            var prompt = await this.generate();
+            this.mode = "thinking";
+            try {
+                this.reply = await askGemini(prompt, this.history);
+                this.history.push({role:"user", parts:[{text:prompt}]}, {role:"model", parts:[{text:this.reply}]});
+                this.history = this.history.slice(-40); // 20 completed exchanges
+                localStorage.setItem("fortune_history", JSON.stringify(this.history));
+            } catch(e) { this.reply = "The crystal ball is cloudy: " + e.message; }
+        }
+        this.mode = "reply";
+        this.replyScroll = 0;
+        // Await Nintendo A/+ to start the next fortune; up/down scroll long replies.
+        var button;
+        do {
+            button = await checkButtons();
+            if (button === 12) this.replyScroll = Math.max(0, this.replyScroll - 2); // D-pad up
+            if (button === 13) this.replyScroll += 2; // D-pad down; drawPanel clamps
+            if (button === 16) {
+                this.history = [];
+                localStorage.removeItem("fortune_history");
+                this.reply = "Conversation memory cleared. Press A or Start for another fortune.";
+                this.replyScroll = 0;
+            }
+        } while (button !== 0 && button !== 9);
+    }
 };
 
 
-// Return the current sentence
-dialogchain.prototype.getSentence = function() {
-    return this.sentArr.join(" ");
+// ADD: All carnival art and dialogue panels are p5 primitives (no background images).
+// Inspired by the supplied THE COSMIC SIDE EYE mockup.
+var compact = false, worldW = 1120, worldH = 860, clock = 0;
+var labelText=function(txt,x,y,size,col) {
+    noStroke(); fill(col || "#f5dfad"); textFont("Georgia"); textSize(size || 18); textAlign(LEFT,BASELINE); text(txt,x,y);
 };
-dialogchain.prototype.run=function(){
-  //set up random number generation for adjectives and adverbs, set up chat history, etc. Overall loop should work, the whole sample with would you like to know your fortune my child should, if you hit 'a' on "yes bae", enter thid loop, if you hit "how high am I, just reply, bro, you are like, sooo stoned, or sleep deprived, either way, there is no way to know the difference atp"
-  
-}
+var star=function(x,y,r,col) {
+    noStroke(); fill(col || "#d9b96e");
+    triangle(x-r,y,x,y-r*2,x+r,y); triangle(x-r,y,x,y+r*2,x+r,y);
+};
+var drawCarnival=function() {
+    background("#14292e");
+    noStroke();
+    for(var i=0;i<80;i++) {
+        var sx=42+(i*137.53)%(worldW-84), sy=175+(i*79.7)%(worldH-240);
+        fill(i%3 ? "#47605b" : "#a38c55"); circle(sx,sy,i%9===0 ? 3 : 1.5);
+    }
+    //Wooden outer frame, cream pinstriping and warm marquee bulbs.
+    noFill(); stroke("#5b342b"); strokeWeight(24); rect(15,15,worldW-30,worldH-30,14);
+    stroke("#b48b48"); strokeWeight(2); rect(29,29,worldW-58,worldH-58,7);
+    for(var b=0;b<Math.floor(worldW/37);b++) {
+        var bx=36+b*(worldW-72)/(Math.floor(worldW/37)-1);
+        noStroke(); fill("#73532f"); circle(bx,35,16);
+        fill(b%3===Math.floor(clock/700)%3 ? "#fff0b4" : "#ccaa67"); circle(bx,35,9);
+    }
+    //Velvet at either side; each stripe is one curtain fold.
+    for(var c=0;c<5;c++) {
+        fill(c%2 ? "#79273b" : "#5b2031");
+        rect(30+c*9,150,12,worldH-188);
+        rect(worldW-42-c*9,150,12,worldH-188);
+    }
+    fill("#74283b"); rect(31,48,worldW-62,109);
+    fill("#511d30");
+    for(var v=0;v<8;v++) arc(30+v*(worldW-60)/8+(worldW-60)/16,153,(worldW-60)/8,65,0,PI);
+    stroke("#c19751"); strokeWeight(2); line(32,152,worldW-32,152);
+    textAlign(CENTER,CENTER); noStroke();
+    fill("#e0ba73"); textFont("Georgia"); textSize(compact ? 12 : 13); text("STEP RIGHT UP · THE UNIVERSE HAS OPINIONS",worldW/2,73);
+    fill("#ffe8b9"); textSize(compact ? 32 : 47); text("THE COSMIC SIDE EYE",worldW/2,115);
+    textSize(12); fill("#e3ba6f"); text("FORTUNES  /  VIBES  /  QUESTIONABLE ADVICE",worldW/2,199);
+    if(!compact) {
+        noFill(); stroke("#a68247"); strokeWeight(1); ellipse(218,395,279,349);
+        for(var z=0;z<12;z++) { var angle=z*TWO_PI/12; star(218+137*cos(angle),395+170*sin(angle),3,"#b8995a"); }
+    }
+    drawTeller(compact ? worldW/2 : 215,compact ? 335 : 522,compact ? .51 : 1);
+    noStroke(); fill("#6c3330"); rect(72,compact ? 378 : 591,compact ? worldW-144 : 287,18,3);
+    fill("#ad7c43"); rect(72,compact ? 378 : 591,compact ? worldW-144 : 287,3);
+    if(!compact) {
+        textAlign(CENTER,CENTER); textSize(20); fill("#e4c283"); text("MADAME MAYBE",216,643);
+        textSize(13); fill("#bbaf8d"); text("Sees all. Judges a little.",216,669);
+        star(216,701,5,"#c6a25e");
+    }
+};
+var drawTeller=function(x,y,s) {
+    push(); translate(x,y); scale(s); noStroke();
+    //Hair and shawl.
+    fill("#171c28"); ellipse(0,-143,166,240);
+    fill("#6b304c"); arc(0,58,236,259,PI,TWO_PI);
+    fill("#a57048"); triangle(-82,-4,-108,46,-30,54); triangle(82,-4,108,46,30,54);
+    fill("#a14b5d"); triangle(-76,-52,-110,55,-18,36); triangle(76,-52,110,55,18,36);
+    fill("#351f36"); ellipse(0,-105,115,163);
+    fill("#c38e69"); ellipse(0,-119,104,138);
+    fill("#ba805f"); triangle(0,-119,-12,-86,10,-86);
+    //Half-lidded eyes and a knowing smile.
+    stroke("#36252e"); strokeWeight(3); noFill(); arc(-24,-124,29,12,0,PI); arc(24,-124,29,12,0,PI); arc(0,-70,33,12,0,PI);
+    noStroke(); fill("#962f49"); arc(0,-69,27,9,0,PI);
+    //Turban, earring hoops and moon brooch.
+    fill("#8c3655"); ellipse(0,-190,136,94); fill("#aa4e68"); arc(-12,-201,111,65,PI,TWO_PI);
+    stroke("#d8ad5f"); strokeWeight(3); noFill(); arc(0,-181,134,55,PI,TWO_PI); ellipse(-58,-101,20,35); ellipse(58,-101,20,35);
+    noStroke(); fill("#d8ad5f"); ellipse(0,-181,23,30); fill("#6a2c4c"); ellipse(6,-184,19,25);
+    fill("#d8ad5f"); circle(0,-148,7);
+    for(var n=0;n<7;n++) { fill("#d1a65e"); circle(-39+n*13,-37+abs(n-3)*-4,7); }
+    //Crystal ball: layered glass, orbit, reflected window, moving sparkle.
+    fill("#735c44"); ellipse(0,65,157,24); fill("#c29151"); rect(-49,46,98,18,5);
+    for(var r=124;r>0;r-=4) { fill(68+r*.31,124+r*.40,130+r*.40); ellipse(0,0,r,r); }
+    noFill(); stroke("#d8f1d5"); strokeWeight(1.5); ellipse(0,0,114,113);
+    push(); rotate(-.3); stroke("#8dbeba"); ellipse(0,0,109,34); pop();
+    noStroke(); fill(239,249,216,150); ellipse(-24,-30,16,23); fill("#e4f0cb"); circle(-12,-41,5);
+    star(22+sin(clock/1300)*5,-6,7,"#f8efb9"); star(-16,19,3,"#e4f0cb");
+    pop();
+};
 
-    setup = function() {
-    
-      createCanvas(screen.width, screen.height);
-      background(0, 255, 255);
-      text("Would you like to know your fortune my child?",200,20);
-    //rect(309,390,32,10);
-      dialogchain.dSbox(309,390, "yes bae");
-      dialogchain.dSbox(360,400, "how high am I");
-    //dialogchain.dSbox(590,400, "send");
-    
+var drawPanel = function() {
+    var x=385,y=249,w=648,h=493;
+    push();
+    fill("#17282d"); stroke("#ad8750"); strokeWeight(2); rect(x,y,w,h,13);
+    noFill(); stroke("#47564f"); strokeWeight(1); rect(x+8,y+8,w-16,h-16,8);
+    textAlign(LEFT,BASELINE); textFont("Georgia");
+    if (!chain) { pop(); return; }
+    if (chain.mode === "intro") {
+        labelText("COME CLOSER, CURIOUS SOUL",x+24,y+42,17,"#d9b372");
+        textSize(30);
+        fortuneWrap("Would you like to know your fortune, my child?",w-55)
+          .forEach(function(line,i) { labelText(line,x+27,y+100+i*37,30,"#fff0cb"); });
+        labelText("The stars are nosy. So am I.",x+27,y+194,19,"#c9b58c");
+        labelText("A life-changing reading. Probably. No refunds.",x+27,y+242,17,"#e9c179");
+        labelText("CHOOSE YOUR FATE",x+25,y+270,14,"#d9b372");
+        labelText("Choose your words. Let destiny do the oversharing.",x+27,y+415,16,"#c9b58c");
+    } else if (chain.mode === "building") {
+        labelText("WHAT WEIGHS ON YOUR AURA?",x+24,y+40,24,"#e9c179");
+        fill("#efe0be"); stroke("#a6835f"); strokeWeight(1); rect(x+23,y+56,w-46,158,7);
+        fill("#493437"); noStroke(); textFont("Georgia"); textSize(20);
+        var sentence = chain.getSentence() || "Your sentence begins with one questionable choice…";
+        var lines=fortuneWrap(sentence,w-85);
+        var visible=lines.slice(-5);
+        visible.forEach(function(line,i) { labelText((lines.length>5 && i===0 ? "… ":"")+line,x+41,y+85+i*29,19,"#48302d"); });
+        labelText("CHOOSE: "+Opts[chain.cwattr].toUpperCase(),x+24,y+246,16,"#e9c179");
+        labelText("A picks · B skips · X rolls again · + asks the oracle",x+24,y+267,14,"#c6b694");
+    } else if (chain.mode === "thinking") {
+        labelText("CONSULTING THE COSMOS",x+27,y+60,27,"#e9c179");
+        for (var b=0;b<3;b++) { noStroke(); fill(b===Math.floor(clock/400)%3 ? "#e7c785" : "#716a52"); circle(x+w/2+(b-1)*37,y+190,14); }
+        labelText("The crystal ball is composing a dramatic answer…",x+27,y+285,19,"#c9b58c");
+        labelText("Mercury is probably involved.",x+27,y+326,16,"#bdad8d");
+    } else if (chain.mode === "reply") {
+        labelText("THE ORACLE HAS SPOKEN",x+27,y+46,27,"#e9c179");
+        labelText("Madame Maybe's entirely questionable prediction",x+27,y+77,15,"#c6b694");
+        textFont("Georgia"); textSize(20);
+        var replyLines=fortuneWrap(chain.reply || "The spirits are mysteriously silent.",w-60);
+        var perPage=12;
+        // Gamepad-only: D-pad up/down scrolls longer replies.
+        var offset=Math.min(Math.max(0,chain.replyScroll||0),Math.max(0,replyLines.length-perPage));
+        chain.replyScroll=offset;
+        replyLines.slice(offset,offset+perPage).forEach(function(line,i) {
+            labelText(line,x+29,y+117+i*27,19,"#f7e8c5");
+        });
+        if (replyLines.length>perPage)
+            labelText("D-pad ↑/↓: scroll  ·  "+(offset+1)+"–"+Math.min(replyLines.length,offset+perPage)+" / "+replyLines.length,x+29,y+450,13,"#c9b58c");
+        else labelText("Press A or + to consult the cosmos again",x+29,y+449,16,"#c9b58c");
     }
-//with
-    draw = function() {
-//rect()
-    //right, so modeling is subject, adjictive, adverb[n many], object
-    //
-    
-      //dialogchain.dSbox(590,400, "send");
-      text("use the D pad to navigate, use 'b' to skip a word generation run, a to select the word, and start to send it", 100,600);
-    }
-  
-  //new p5(sketch)
+    if (chain.mode === "intro" || chain.mode === "building")
+        for (var j=0;j<chain.options.length;j++) chain.options[j].update();
+    pop();
+};
+var drawInstructions = function() {
+    push(); textAlign(CENTER,CENTER); noStroke(); textFont("Georgia");
+    fill("#dfc593"); textSize(15);
+    text(gamepadIndex === null ? "CONNECT A NINTENDO CONTROLLER AND PRESS ANY BUTTON" :
+        "NINTENDO  ·  D-pad: navigate  ·  A: choose  ·  B: skip  ·  +: send",worldW/2,774);
+    fill("#b9b69e"); textSize(13);
+    text("X tap: reroll  ·  Hold X: forget previous readings",worldW/2,801);
+    fill("#a9baa7"); textSize(12);
+    text("MADAME MAYBE  ·  SEES ALL. JUDGES A LITTLE.   ·   "+(chain ? Math.floor(chain.history.length/2) : 0)+" PAST READINGS",worldW/2,831);
+    pop();
+};
+preload = function() {
+    // FIX: p5 loads the JSON before setup; no module import, require(), or embedded 600 KB script.
+    wordlist = loadJSON("./massive_fortune_wordbank.json");
+};
+setup = function() {
+    var canvas=createCanvas(1120,860);
+    canvas.parent("stage");
+    textFont("Georgia");
+    frameRate(30);
+    chain = new dialogchain(wordlist, [], 0);
+    chain.replyScroll=0;
+    chain.run(); // Start once; generate() and select() hand off without duplicate listeners.
+};
+draw = function() {
+    clock=millis();
+    drawCarnival();
+    drawPanel();
+    drawInstructions();
+};
 </script>
-  
-<head>
-  </head>
-  <body>
-  
-  <div id="tbx">
-    <form>
-      <input id="cht">
-    </form>
-    hello
-    </div>
-  </body>
+</body>
 </html>
